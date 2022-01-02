@@ -1,0 +1,20 @@
+{
+  "name": "notion-example",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "dependencies": {
+    "@notionhq/client": "^0.1.9",
+    "ansi-regex": "^6.0.1",
+    "google-search-results-nodejs": "^2.1.0",
+    "googleapis": "^92.0.0",
+    "install": "^0.13.0",
+    "jikan-node": "^1.2.1",
+    "node-fetch": "^3.1.0",
+    "node-myanimelist": "^1.1.4",
+    "npm": "^8.3.0",
+    "pkce-challenge": "^2.2.0",
+    "strip-ansi": "^7.0.1"
+  }
+}
