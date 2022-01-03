@@ -124,14 +124,14 @@ async function getMALData(id, mediaType) {
 /**
  * Do MAL query, unpack the data, and prepare for notion data format.
  */
-async function getDataFromMyAnimeList(id, mediaType) {
+async function getDataFromMyAnimeList(id, mediaType, skipSequel) {
 	const mal = new Jikan();
 	let data = await getMALData(id, mediaType);
 	
 	if (!data) {
 		return {};
 	}
-	console.log(data);
+
 	let isManga = mediaType == "Manga";
 
 	// Get metadata
@@ -139,7 +139,7 @@ async function getDataFromMyAnimeList(id, mediaType) {
 	let demographics = data.demographics.map(demo => demo.name)
 	let type = data.type
 	let duration = getDuration(data.duration, type)
-	console.log(duration)
+
 	// Cumulative tracking
 	let numSequels = 0
 	let numEps = !isManga ? data.episodes : data.volumes;
@@ -149,48 +149,60 @@ async function getDataFromMyAnimeList(id, mediaType) {
 
 	let sequels = getSequels(data)
 	let sequelNames = "";
-	
+
 	// Linked list traversal of sequel data to get latest air status
 	// average rating, and number of episodes.
-	console.log(sequels)
-	while (sequels && sequels.length > 0) {
-		let allSequels = [];
-		for (const sequel of sequels) {
-			if (!sequel) {
-				sequels = [];
+	if (skipSequel && sequels) {
+		for (let i = 0; i < sequels.length; i++) {
+			let sequel = sequels[i];
+			if (i == 0) {
+				sequelNames += sequel.name;
+			} else {
+				sequelNames += ", " + sequel.name;
+			}
+		}
+	} else {
+		while (sequels && sequels.length > 0) {
+			let allSequels = [];
+			for (const sequel of sequels) {
+				if (!sequel) {
+					sequels = [];
+					break;
+				}
+				let seqData = await getMALData(sequel.mal_id, mediaType);
+				allSequels = allSequels.concat(getSequels(seqData));
+				console.log(seqData.title)
+				if (seqData.type != "TV" && seqData.type != "Manga") { // Ignore movies and OVAs
+					console.log("Skipping...")
+					continue;
+				}
+				// Get total number of sequels and build list of sequel names
+				numSequels++;
+				sequelNames += numSequels == 1 ? seqData.title : ", " + seqData.title
+
+				let seqNum = !isManga ? seqData.episodes : seqData.volumes;
+				let seqDur = getDuration(seqData.duration, seqData.type)
+				if (!skipSequel) {
+					// Get latest status
+					status = seqData.status
+				}
+				if (seqNum && seqDur) {
+					// Add to total time and number of episodes
+					totalTime += seqNum * seqDur;
+					numEps += seqNum;
+				} 
+				
+				// Get average score
+				if (seqData.score) {
+					score += seqData.score
+				}
 				break;
 			}
-			let seqData = await getMALData(sequel.mal_id, mediaType);
-			allSequels = allSequels.concat(getSequels(seqData));
-			console.log(seqData.title)
-			if (seqData.type != "TV" && seqData.type != "Manga") { // Ignore movies and OVAs
-				console.log("Skipping...")
-				continue;
-			}
-			// Get total number of sequels and build list of sequel names
-			numSequels++;
-			sequelNames += numSequels == 1 ? seqData.title : ", " + seqData.title
 
-			let seqNum = !isManga ? seqData.episodes : seqData.volumes;
-			let seqDur = getDuration(seqData.duration, seqData.type)
-			if (seqNum && seqDur) {
-				// Add to total time and number of episodes
-				totalTime += seqNum * seqDur;
-				numEps += seqNum;
-			} 
-			
-			// Get average score
-			if (seqData.score) {
-				score += seqData.score
-			}
-
-			// Get latest status
-			status = seqData.status
-			break;
+			sequels = allSequels
 		}
-
-		sequels = allSequels
 	}
+	
 
 	if (numSequels > 0) {
 		score /= (numSequels + 1)
@@ -231,7 +243,7 @@ async function getDataFromMyAnimeList(id, mediaType) {
 	    	]
 	    },
 	    "Skip" : {
-	    	checkbox: true
+	    	checkbox: false
 	    }
   	});
     });
@@ -243,7 +255,8 @@ let googleAPICalls = 0;
  *  Enforce that getAnimeData is done after google search gets the URL.
  */
 async function getAnimeData(item, callback) {
-	let [notionID, inputID, mediaType, nameAnime, sequelTitles] = Object.values(item);
+	let [notionID, inputID, mediaType, nameAnime, sequelTitles, skip, cleaned, skipSequel] = Object.values(item);
+	console.log(skipSequel)
 	let inputTitle = nameAnime.concat(" " + mediaType).concat(" MyAnimeList");
 
 	/**
@@ -280,7 +293,7 @@ async function getAnimeData(item, callback) {
 		}
 		
 		if (id) {
-			let res = await getDataFromMyAnimeList(id, mediaType);
+			let res = await getDataFromMyAnimeList(id, mediaType, skipSequel);
 			console.log(
 				"========================================\n" + 
 				"Results for " + nameAnime +
@@ -386,6 +399,7 @@ async function getItemsFromNotionDatabase() {
       sequelTitles: unpack(page, "Sequel Titles", getRichText), // Compile list of sequel titles to know where total episode count comes from
       skip: unpack(page, "Skip", getCheckbox), // Skip if processed already
       cleaned: unpack(page, "Cleaned", getCheckbox), // MAL results needed manual intervention
+      skipSequel: unpack(page, "Skip Sequel Traverse", getCheckbox),
     };
   };
   return pages.map(packProperties)
