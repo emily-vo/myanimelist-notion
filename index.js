@@ -93,52 +93,56 @@ function getDuration(durationString, mediaType) {
 		return 90;
 	}
 	let split = durationString.split(" ");
-	if (mediaType === "TV") {
-		return parseInt(split.at(0));
-	}
-	else if (mediaType === "Movie") {
+	if (mediaType === "Movie") {
 		return 60 * parseInt(split.at(0)) + parseInt(split.at(2));
+	} else {
+		return parseInt(split.at(0));
 	}
 }
 
 function getSequels(data) {
-	if (data.Sequel) {
-		return data.Sequel;
-	} else if (data.related) {
+	if (data.related) {
 		return data.related.Sequel;
+	} else if (data.Sequel) {
+		return data.Sequel;
 	} else {
 		return undefined;
 	}
 }
 
+async function getMALData(id, mediaType) {
+	let data = undefined;
+	let isManga = mediaType == "Manga";
+	// Allow for retries with MAL API recursive wrapper
+	if (isManga) {
+		data = await findManga(id);
+	} else {
+		data = await findAnime(id);
+	}
+	return data;
+}
 /**
  * Do MAL query, unpack the data, and prepare for notion data format.
  */
 async function getDataFromMyAnimeList(id, mediaType) {
 	const mal = new Jikan();
-	let data = undefined;
-
-	let isManga = mediaType !== "Manga";
-
-	// Allow for retries with MAL API recursive wrapper
-	if (isManga) {
-		data = await findAnime(id);
-	} else {
-		data = await findManga(id);
-	}
+	let data = await getMALData(id, mediaType);
 	
 	if (!data) {
 		return {};
 	}
+	console.log(data);
+	let isManga = mediaType == "Manga";
+
 	// Get metadata
 	let genres = data.genres.map(genre => genre.name)
 	let demographics = data.demographics.map(demo => demo.name)
 	let type = data.type
 	let duration = getDuration(data.duration, type)
-
+	console.log(duration)
 	// Cumulative tracking
 	let numSequels = 0
-	let numEps = isManga ? data.episodes : data.volumes;
+	let numEps = !isManga ? data.episodes : data.volumes;
 	let totalTime = duration * numEps;
 	let status = data.status
 	let score = data.score
@@ -148,6 +152,7 @@ async function getDataFromMyAnimeList(id, mediaType) {
 	
 	// Linked list traversal of sequel data to get latest air status
 	// average rating, and number of episodes.
+	console.log(sequels)
 	while (sequels && sequels.length > 0) {
 		let allSequels = [];
 		for (const sequel of sequels) {
@@ -155,25 +160,29 @@ async function getDataFromMyAnimeList(id, mediaType) {
 				sequels = [];
 				break;
 			}
-			let seqData = await findAnime(sequel.mal_id);
+			let seqData = await getMALData(sequel.mal_id, mediaType);
 			allSequels = allSequels.concat(getSequels(seqData));
-
-			if (seqData.type != "TV") {
+			console.log(seqData.title)
+			if (seqData.type != "TV" && seqData.type != "Manga") { // Ignore movies and OVAs
+				console.log("Skipping...")
 				continue;
 			}
 			// Get total number of sequels and build list of sequel names
 			numSequels++;
 			sequelNames += numSequels == 1 ? seqData.title : ", " + seqData.title
 
-			let seqNum = seqData.type != "Manga" ? seqData.episodes : seqData.volumes;
+			let seqNum = !isManga ? seqData.episodes : seqData.volumes;
 			let seqDur = getDuration(seqData.duration, seqData.type)
-
-			// Add to total time and number of episodes
-			totalTime += seqNum * seqDur;
-			numEps += seqNum;
+			if (seqNum && seqDur) {
+				// Add to total time and number of episodes
+				totalTime += seqNum * seqDur;
+				numEps += seqNum;
+			} 
 			
 			// Get average score
-			score += seqData.score
+			if (seqData.score) {
+				score += seqData.score
+			}
 
 			// Get latest status
 			status = seqData.status
@@ -194,9 +203,9 @@ async function getDataFromMyAnimeList(id, mediaType) {
 			number : numEps,
 		},
 
-	    "Total Duration (Min)": {
-	       number: totalTime,
-	    },
+		"Duration" : {
+			number : duration,
+		},
 
 	    "Airing Status": {
 	      select: { name: status },
@@ -411,7 +420,7 @@ async function updatePages(pagesToUpdate) {
 // ENTRY POINT
 // Retrieve items from notion and process in batches
 let currentItems = await getItemsFromNotionDatabase();
-currentItems = currentItems.filter(item => !item.skip && item.mediaType != "Manga" && !item.clean)
+currentItems = currentItems.filter(item => !item.skip && !item.clean)
 
 const INTERVAL = 15;
 let START = 0;
